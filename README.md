@@ -1,6 +1,6 @@
 # 🎵 Music Streaming Churn Prediction
 
-**Authors:** Alec & [@silabou](https://github.com/silabou)
+**Authors:** Me & Sila (https://github.com/silabou) 
 
 **Context:** Python for Data Science class @ École Polytechnique
 
