@@ -5,53 +5,54 @@
 
 ## 🚀 Project Overview
 
-This repository contains a complete Machine Learning pipeline designed to predict user churn for a music streaming service. Using raw user activity logs (listening history, page visits, errors, etc.), we engineered time-series features to classify whether a user is likely to cancel their subscription.
+This repository contains a complete Machine Learning pipeline designed to predict user churn for a music streaming service. Using raw user activity logs (listening history, page visits, errors, etc.), we engineered time-series features to classify whether a user is likely to cancel their subscription within a 10-day window.
 
-The goal was to build a robust model capable of handling class imbalance and preventing overfitting on the leaderboard metric.
+The goal was to build a robust model capable of handling class imbalance and maximizing the F1-Score on the leaderboard.
 
 ## 🛠 Key Features
 
 * **Advanced Feature Engineering:**
-    * **Rolling Window Statistics:** Calculated 14-day and 30-day moving averages (listening time, thumbs up/down, error rates).
-    * **Trend Analysis:** Slope and ratio features comparing recent activity (last 7 days) vs. historical averages to capture behavioral shifts.
-    * **Gap-Aware Labeling:** Implemented a 2-week "blind" gap between feature computation and target labels to prevent data leakage and simulate real-world prediction scenarios.
+    * **Multi-Scale Rolling Windows:** Calculated **3d, 7d, 14d, and 30d** moving stats (sums, averages) to capture short-term vs. long-term behavior.
+    * **Velocity & Trend Features:** Engineered ratio features (e.g., *Activity last 3 days / Activity last 14 days*) to explicitly model "slowing down" behavior.
+    * **Interaction Ratios:** Created "Frustration" (Errors per hour) and "Engagement" (Songs per session) indices.
 
-* **Dimensionality Reduction:** * Utilized `SelectFromModel` with a base XGBoost estimator to identify and retain only the top 35 predictive features.
+* **Data Augmentation via "Snapshot Stacking":**
+    * Instead of a single row per user, we implemented a **Sliding Window Snapshot** strategy.
+    * We generated training samples every 2 days (from Oct 7 to Nov 1). This multiplied our training size and allowed the model to learn the *evolution* of a user's journey, effectively turning a static classification problem into a temporal one.
 
-* **Ensemble Stacking Architecture:**
-    * **Level 1:** Trained a diverse set of base models: **XGBoost, LightGBM, CatBoost, and RandomForest**.
-    * **Level 2:** A meta-learner (Logistic Regression) combines the out-of-fold probabilities from the base models to make the final prediction.
+* **Robust Modeling Pipeline:**
+    * **Feature Selection:** Used `SelectFromModel` with a base XGBoost estimator to prune noise and retain only the top predictive features.
+    * **Algorithm:** Single **XGBoost Classifier** (optimized with the `hist` tree method for speed).
+    * **Grouped Cross-Validation:** Trained a 5-fold ensemble (grouped by UserID to prevent leakage) and averaged the predictions to reduce variance.
 
-* **Automated Tuning:** * Used **Optuna** for Bayesian optimization of hyperparameters for all tree-based models, optimizing specifically for F1-Score.
+* **Automated Tuning:** Used **Optuna** for Bayesian optimization of the XGBoost hyperparameters (Learning Rate, Depth, L1/L2 Reg), optimizing specifically for AUC.
 
 ## 📉 Iterative Modeling Strategy
 
 We approached this problem iteratively to improve performance and stability:
 
-1. **Baseline & Leakage Fix:**
-   * Initially identified a "Deathbed" leakage issue where the model was training on the exact moment of cancellation.
-   * *Solution:* Implemented a strict time-based split, removing the last 14 days of data for every user during training to force the model to detect early warning signs.
+1. **Baseline & Feature Engineering:**
+   * We started by aggregating logs per user. However, simple aggregates failed to capture the *speed* of churn.
+   * *Pivot:* We introduced "Velocity" features (ratios of short-term vs long-term windows) to detect sudden drops in activity.
 
-2. **Feature Expansion & Selection:**
-   * Engineered over 60+ aggregated features including session intervals and diversity scores.
-   * Pruned the feature space using importance-based selection to reduce noise and training time.
+2. **Addressing Data Scarcity (The "Snapshot" Shift):**
+   * **Problem:** With a limited number of unique users, a simple "one row per user" model was overfitting and lacked sufficient training examples.
+   * **Solution:** We moved to a **Stacked Snapshot Dataset**. By taking a snapshot of every user every 2 days and predicting churn in the *next 10 days*, we increased our dataset size by ~13x. This helped the model distinguish between a "safe" period and a "risk" period for the same user.
 
-3. **Model Diversification (The "Stacking" Shift):**
-   * **Problem:** Single XGBoost models were hitting a performance ceiling and struggling with high-variance false positives.
-   * **Solution:** We moved to a **Stacking Ensemble**. We trained 4 distinct model architectures (XGB, LGBM, CatBoost, RF) on the same data.
-   * **Benefit:** CatBoost handled categorical data natively, while Random Forest provided stability against overfitting. The combination (via a meta-learner) significantly boosted the AUC.
+3. **Leakage Prevention:**
+   * Strictly separated feature calculation (history) from the target window.
+   * Used `GroupKFold` during validation to ensure that the same user (appearing in multiple snapshots) never appeared in both the Train and Validation sets simultaneously.
 
-4. **Final Optimization (Optuna):**
-   * Replaced manual GridSearch with `Optuna` to efficiently navigate the hyperparameter space for all 3 gradient boosting models.
-   * Tuned regularization (L1/L2) and tree depth to prevent overfitting on the validation set.
+4. **Final Calibration (Dynamic Thresholding):**
+   * Instead of a standard 0.5 threshold, we implemented a **Target-Rate Calibration**.
+   * The final submission dynamically selects the probability threshold that forces the predicted churn rate to match the expected population churn (~40%), ensuring the predictions are aligned with the business reality.
 
 ## 📊 Results
 
 The pipeline generates comprehensive performance visualizations:
 
-1. **Correlation Heatmaps:** To verify feature independence.
-2. **ROC & PR Curves:** Evaluating the trade-off between True Positives and False Positives.
-3. **Cumulative Gain Curve:** Demonstrating the model's lift over random guessing.
-4. **Submission Output:** A probability file (`submission_final_binary.csv`) ready for leaderboard submission, with predictions calibrated to the expected churn rate.
+1. **ROC & Precision-Recall Curves:** To evaluate the trade-off between True Positives and False Positives.
+2. **Cumulative Gains Curve (The "Banana" Plot):** Explicit visualization of how much better the model is compared to random guessing (e.g., "Top 40% of predictions capture X% of churners").
+3. **Submission Output:** A probability file (`submission_final_binary.csv`) generated by the 5-fold ensemble.
 
 *This project is part of the academic coursework at École Polytechnique.*
